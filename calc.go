@@ -4,201 +4,146 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"unicode"
 )
 
-type TokenType int
-
-const (
-	TokenEOF TokenType = iota
-	TokenNumber
-	TokenPlus
-	TokenMinus
-	TokenMultiply
-	TokenDivide
-	TokenLeftParen
-	TokenRightParen
-)
-
-type Token struct {
-	typ   TokenType
-	value string
-}
-
-type Lexer struct {
-	input string
-	pos   int
-	ch    rune
-}
-
-func NewLexer(input string) *Lexer {
-	l := &Lexer{input: input, pos: 0}
-	l.ch = l.nextChar()
-	return l
-}
-
-func (l *Lexer) nextChar() rune {
-	if l.pos >= len(l.input) {
-		l.ch = 0
-		return 0
+func Calc(expression string) (float64, error) {
+	tokens, err := tokenize(expression)
+	if err != nil {
+		return 0, err
 	}
-	ch := rune(l.input[l.pos])
-	l.pos++
-	return ch
+	return parseExpression(&tokens)
 }
 
-func (l *Lexer) NextToken() Token {
-	for unicode.IsSpace(l.ch) {
-		l.ch = l.nextChar()
-	}
-	switch {
-	case unicode.IsDigit(l.ch):
-		start := l.pos - 1
-		for unicode.IsDigit(l.ch) || l.ch == '.' {
-			l.ch = l.nextChar()
+// Tokenizer: Converts the string expression into a list of tokens
+func tokenize(expression string) ([]string, error) {
+	var tokens []string
+	var currentToken strings.Builder
+
+	for _, ch := range expression {
+		if unicode.IsDigit(ch) || ch == '.' {
+			currentToken.WriteRune(ch) // Continue building number token
+		} else if strings.ContainsRune("+-*/()", ch) {
+			if currentToken.Len() > 0 {
+				tokens = append(tokens, currentToken.String())
+				currentToken.Reset()
+			}
+			tokens = append(tokens, string(ch)) // Add operator or bracket
+		} else if unicode.IsSpace(ch) {
+			if currentToken.Len() > 0 {
+				tokens = append(tokens, currentToken.String())
+				currentToken.Reset()
+			}
+		} else {
+			return nil, errors.New("invalid character")
 		}
-		return Token{typ: TokenNumber, value: l.input[start : l.pos-1]}
-	case l.ch == '+':
-		l.ch = l.nextChar()
-		return Token{typ: TokenPlus, value: "+"}
-	case l.ch == '-':
-		l.ch = l.nextChar()
-		return Token{typ: TokenMinus, value: "-"}
-	case l.ch == '*':
-		l.ch = l.nextChar()
-		return Token{typ: TokenMultiply, value: "*"}
-	case l.ch == '/':
-		l.ch = l.nextChar()
-		return Token{typ: TokenDivide, value: "/"}
-	case l.ch == '(':
-		l.ch = l.nextChar()
-		return Token{typ: TokenLeftParen, value: "("}
-	case l.ch == ')':
-		l.ch = l.nextChar()
-		return Token{typ: TokenRightParen, value: ")"}
-	case l.ch == 0:
-		return Token{typ: TokenEOF, value: ""}
 	}
 
-	return Token{typ: TokenEOF, value: ""}
-}
-
-type Parser struct {
-	lexer   *Lexer
-	current Token
-}
-
-func NewParser(lexer *Lexer) *Parser {
-	p := &Parser{lexer: lexer}
-	p.nextToken()
-	return p
-}
-
-func (p *Parser) nextToken() {
-	p.current = p.lexer.NextToken()
-}
-
-func (p *Parser) Parse() (float64, error) {
-	result, err := p.expression()
-	if err != nil {
-		return 0, err
+	if currentToken.Len() > 0 {
+		tokens = append(tokens, currentToken.String())
 	}
-	if p.current.typ != TokenEOF {
-		return 0, errors.New("invalid expression")
-	}
-	return result, nil
+
+	return tokens, nil
 }
 
-func (p *Parser) expression() (float64, error) {
-	result, err := p.term()
+// Parse an expression (handles +, -, *, /, and parentheses)
+func parseExpression(tokens *[]string) (float64, error) {
+	return parseTerm(tokens)
+}
+
+// Parse a term (handles + and - operations)
+func parseTerm(tokens *[]string) (float64, error) {
+	result, err := parseFactor(tokens)
 	if err != nil {
 		return 0, err
 	}
 
-	for p.current.typ == TokenPlus || p.current.typ == TokenMinus {
-		op := p.current
-		p.nextToken()
-		nextTerm, err := p.term()
+	for len(*tokens) > 0 {
+		token := (*tokens)[0]
+		if token != "+" && token != "-" {
+			break
+		}
+		*tokens = (*tokens)[1:] // Consume the operator
+
+		nextValue, err := parseFactor(tokens)
 		if err != nil {
 			return 0, err
 		}
 
-		if op.typ == TokenPlus {
-			result += nextTerm
+		if token == "+" {
+			result += nextValue
 		} else {
-			result -= nextTerm
+			result -= nextValue
 		}
 	}
 
 	return result, nil
 }
 
-func (p *Parser) term() (float64, error) {
-	result, err := p.factor()
+// Parse a factor (handles * and / operations)
+func parseFactor(tokens *[]string) (float64, error) {
+	result, err := parsePrimary(tokens)
 	if err != nil {
 		return 0, err
 	}
 
-	for p.current.typ == TokenMultiply || p.current.typ == TokenDivide {
-		op := p.current
-		p.nextToken()
-		nextFactor, err := p.factor()
+	for len(*tokens) > 0 {
+		token := (*tokens)[0]
+		if token != "*" && token != "/" {
+			break
+		}
+		*tokens = (*tokens)[1:] // Consume the operator
+
+		nextValue, err := parsePrimary(tokens)
 		if err != nil {
 			return 0, err
 		}
 
-		if op.typ == TokenMultiply {
-			result *= nextFactor
+		if token == "*" {
+			result *= nextValue
 		} else {
-			if nextFactor == 0 {
+			if nextValue == 0 {
 				return 0, errors.New("division by zero")
 			}
-			result /= nextFactor
+			result /= nextValue
 		}
 	}
 
 	return result, nil
 }
 
-func (p *Parser) factor() (float64, error) {
-	var result float64
-	var err error
+// Parse a primary value (number or parentheses)
+func parsePrimary(tokens *[]string) (float64, error) {
+	if len(*tokens) == 0 {
+		return 0, errors.New("unexpected end of expression")
+	}
 
-	if p.current.typ == TokenNumber {
-		result, err = strconv.ParseFloat(p.current.value, 64)
+	token := (*tokens)[0]
+	*tokens = (*tokens)[1:] // Consume the token
+
+	if token == "(" {
+		result, err := parseTerm(tokens)
 		if err != nil {
 			return 0, err
 		}
-		p.nextToken()
-	} else if p.current.typ == TokenLeftParen {
-		p.nextToken()
-		result, err = p.expression()
-		if err != nil {
-			return 0, err
-		}
-		if p.current.typ != TokenRightParen {
+		if len(*tokens) == 0 || (*tokens)[0] != ")" {
 			return 0, errors.New("missing closing parenthesis")
 		}
-		p.nextToken()
-	} else {
-		return 0, errors.New("invalid expression")
+		*tokens = (*tokens)[1:] // Consume closing parenthesis
+		return result, nil
 	}
 
-	return result, nil
+	return strconv.ParseFloat(token, 64) // Parse a number
 }
-
-func Calc(expression string) (float64, error) {
-	lexer := NewLexer(expression)
-	parser := NewParser(lexer)
-	return parser.Parse()
-}
-
 func main() {
-	expr := "3 + 5 * (2 - 8)"
-	result, err := Calc(expr)
+	var expression string
+	fmt.Print("Enter an expression: ")
+	fmt.Scan(&expression)
+	result, err := Calc(expression)
 	if err != nil {
-		fmt.Println("Error:", err)
+		fmt.Println(err)
 	} else {
-		fmt.Printf("Result: %f\n", result)
+		fmt.Println(result)
 	}
 }
